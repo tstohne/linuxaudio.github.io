@@ -1,312 +1,882 @@
-# Linux Audio for Musicians
-### A practical guide for 2026 — written for people who think in signal chains, not system architecture
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Linux Audio for Musicians</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<style>
+  /* ── Zenburn palette ─────────────────────────────────────── */
+  :root {
+    --zb-bg:        #3f3f3f;
+    --zb-bg-dark:   #2b2b2b;
+    --zb-bg-darker: #1e1e1e;
+    --zb-bg-light:  #4f4f4f;
+    --zb-bg-lighter:#5f5f5f;
+    --zb-fg:        #dcdccc;
+    --zb-fg-dim:    #ababab;
+    --zb-fg-dimmer: #888878;
+    --zb-green:     #7f9f7f;
+    --zb-green-light:#9fbf9f;
+    --zb-yellow:    #e3ceab;
+    --zb-yellow-dim:#c8b090;
+    --zb-orange:    #dfaf8f;
+    --zb-red:       #cc9393;
+    --zb-blue:      #8cd0d3;
+    --zb-blue-dim:  #6ca0a3;
+    --zb-purple:    #c0bed1;
+    --zb-border:    #5a5a5a;
+    --zb-border-dim:#4a4a4a;
 
----
+    /* Layout */
+    --sidebar-w: 280px;
+    --content-max: 820px;
+    --header-h: 52px;
+  }
 
-## Before we start: what this guide assumes
+  * { box-sizing: border-box; margin: 0; padding: 0; }
 
-You know what a signal chain is. You've plugged a guitar into a DI, routed it to a channel strip, sent it to a bus, printed it to a track. You think in terms of *in*, *out*, *through*, and *why is there a click every 30 seconds*.
+  html { scroll-behavior: smooth; }
 
-This guide does not assume you know what a kernel module is.
+  body {
+    background: var(--zb-bg-dark);
+    color: var(--zb-fg);
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 15px;
+    line-height: 1.7;
+  }
 
-It does assume you want to record real instruments, with real latency requirements, on Linux — and that you're tired of documentation written by people who find the architecture interesting rather than the music.
+  /* ── Top bar ─────────────────────────────────────────────── */
+  header {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: var(--header-h);
+    background: var(--zb-bg-darker);
+    border-bottom: 1px solid var(--zb-border-dim);
+    display: flex;
+    align-items: center;
+    padding: 0 24px;
+    z-index: 100;
+    gap: 16px;
+  }
 
----
+  .header-logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    text-decoration: none;
+  }
 
-## Part 1: The mental model (read this, skip nothing)
+  .header-logo svg {
+    width: 22px; height: 22px;
+    fill: var(--zb-green);
+    flex-shrink: 0;
+  }
 
-### Think in signal chains, not layers
+  .header-title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--zb-yellow);
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
 
-Every piece of Linux audio documentation you'll find starts with a diagram that looks like this:
+  .header-sep {
+    width: 1px;
+    height: 20px;
+    background: var(--zb-border);
+    margin: 0 4px;
+  }
 
-```
-Application → PulseAudio/JACK → ALSA → Hardware
-```
+  .header-subtitle {
+    font-size: 12px;
+    color: var(--zb-fg-dimmer);
+    font-style: italic;
+  }
 
-This is technically accurate and practically useless, for the same reason that explaining a mixing console by starting with its power supply is technically accurate and practically useless.
+  .header-badge {
+    margin-left: auto;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--zb-green);
+    background: rgba(127,159,127,0.12);
+    border: 1px solid rgba(127,159,127,0.3);
+    padding: 2px 10px;
+    border-radius: 20px;
+    white-space: nowrap;
+  }
 
-Here's the model that actually helps:
+  /* ── Layout shell ────────────────────────────────────────── */
+  .shell {
+    display: flex;
+    padding-top: var(--header-h);
+    min-height: 100vh;
+  }
 
-**Your audio interface is a patch bay.** It has physical inputs and outputs, a fixed number of channels, and it runs at a clock rate you set. Everything else in the system is trying to get signals to and from that patch bay reliably, without dropping chunks.
+  /* ── Sidebar ─────────────────────────────────────────────── */
+  nav {
+    width: var(--sidebar-w);
+    flex-shrink: 0;
+    position: fixed;
+    top: var(--header-h);
+    bottom: 0;
+    left: 0;
+    overflow-y: auto;
+    background: var(--zb-bg-darker);
+    border-right: 1px solid var(--zb-border-dim);
+    padding: 24px 0 48px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--zb-border) transparent;
+  }
 
-**PipeWire is the studio.** It's the environment in which all your applications — your DAW, your browser, your software synths — exist simultaneously and can route audio between each other and to the patch bay. It manages who gets to talk, when, and in what order.
+  nav::-webkit-scrollbar { width: 4px; }
+  nav::-webkit-scrollbar-track { background: transparent; }
+  nav::-webkit-scrollbar-thumb { background: var(--zb-border); border-radius: 2px; }
 
-**ALSA is the cable from the patch bay to the wall.** It's the low-level driver that lets PipeWire talk to your hardware at all. In normal operation, you will never think about it. It will only matter if your interface isn't showing up at all, in which case there's a troubleshooting section later.
+  .nav-section-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--zb-fg-dimmer);
+    padding: 16px 20px 6px;
+    margin-top: 8px;
+  }
 
-That's the whole stack. ALSA talks to hardware. PipeWire routes everything. Your apps talk to PipeWire.
+  .nav-section-label:first-child { margin-top: 0; }
 
-A note on history: you'll read a lot about PulseAudio and JACK as if they're things you need to choose between. On any modern Linux distribution in 2026, PipeWire has replaced both. It speaks their languages for compatibility — apps written for JACK or PulseAudio work without modification — but PipeWire is the actual ground truth. Start there.
+  nav a {
+    display: block;
+    padding: 5px 20px 5px 20px;
+    font-size: 13px;
+    color: var(--zb-fg-dim);
+    text-decoration: none;
+    line-height: 1.4;
+    border-left: 2px solid transparent;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+  }
 
----
+  nav a:hover {
+    color: var(--zb-fg);
+    background: rgba(255,255,255,0.04);
+    border-left-color: var(--zb-border);
+  }
 
-## Part 2: Latency — the thing that actually matters
+  nav a.active {
+    color: var(--zb-yellow);
+    border-left-color: var(--zb-yellow);
+    background: rgba(227,206,171,0.06);
+  }
 
-### The bet you're making
+  nav a.sub {
+    padding-left: 32px;
+    font-size: 12px;
+  }
 
-Every audio system works by processing audio in chunks. Your interface captures some samples, hands them to the computer, the computer processes them, hands them back, the interface plays them out. The size of that chunk — the **buffer** — determines your latency.
+  /* ── Main content ────────────────────────────────────────── */
+  main {
+    margin-left: var(--sidebar-w);
+    flex: 1;
+    padding: 48px 48px 96px;
+    max-width: calc(var(--sidebar-w) + var(--content-max) + 96px);
+  }
 
-Here's the mental model: **your buffer size is a bet you're making about how long your CPU has to process a chunk before the next one arrives.**
+  .content {
+    max-width: var(--content-max);
+  }
 
-If your buffer is 128 samples at 48kHz, you're telling the system: "I bet I can process 2.67ms worth of audio, consistently, every 2.67ms, with no interruptions." If you win that bet every time, you hear nothing wrong. If you lose it — the CPU gets interrupted by something, a USB packet is late, a driver hiccuped — you get an **xrun**: a dropout, a click, a glitch.
+  /* ── Typography ──────────────────────────────────────────── */
+  h1 {
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 28px;
+    font-weight: 600;
+    color: var(--zb-yellow);
+    line-height: 1.25;
+    margin-bottom: 8px;
+  }
 
-This is why the advice "just lower your buffer size" is incomplete. A lower buffer is a harder bet. Whether you can win it depends on your hardware, your kernel configuration, your interface's USB implementation, and what else your system is doing.
+  .subtitle {
+    font-size: 15px;
+    color: var(--zb-fg-dim);
+    font-style: italic;
+    margin-bottom: 36px;
+    padding-bottom: 28px;
+    border-bottom: 1px solid var(--zb-border-dim);
+  }
 
-### The numbers
+  h2 {
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--zb-orange);
+    margin-top: 56px;
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--zb-border-dim);
+    scroll-margin-top: calc(var(--header-h) + 24px);
+  }
 
-At 48kHz (standard for most interfaces):
+  h2:first-of-type { margin-top: 0; }
 
-| Buffer size | Latency (one-way) | Practical feel |
-|---|---|---|
-| 64 samples | 1.3ms | Aggressive. Requires optimized kernel, nothing else running. |
-| 128 samples | 2.7ms | Good for most tracking. The target for serious work. |
-| 256 samples | 5.3ms | Fine for most musicians. Not noticeable on guitar or keys. |
-| 512 samples | 10.7ms | Getting perceptible. Okay for mixing, not ideal for tracking. |
-| 1024 samples | 21.3ms | Noticeable. Only use this if lower causes xruns. |
+  h3 {
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--zb-blue);
+    margin-top: 32px;
+    margin-bottom: 12px;
+    scroll-margin-top: calc(var(--header-h) + 24px);
+  }
 
-Round-trip latency (in to out) is roughly double, plus a fixed hardware offset that varies by interface. Your interface's hardware buffer adds a few milliseconds on top — check your device's specs.
+  p {
+    margin-bottom: 16px;
+    color: var(--zb-fg);
+  }
 
-**The practical starting point:** Use 256 samples until you have a reason not to. If you're tracking live instruments and the delay is perceptible, try 128. If you get xruns at 128, you need to look at your kernel setup before blaming your interface.
+  strong {
+    color: var(--zb-yellow);
+    font-weight: 600;
+  }
 
-### The realtime kernel question
+  em { color: var(--zb-fg-dim); font-style: italic; }
 
-Consumer Linux kernels are not optimized for audio. They can be interrupted by other system processes mid-chunk, which causes xruns at low buffer sizes. A **realtime (RT) kernel** reduces this dramatically by giving audio processes the ability to preempt almost everything else.
+  a { color: var(--zb-blue); text-decoration: none; }
+  a:hover { text-decoration: underline; }
 
-On CachyOS, you already have good options. The `linux-cachyos` kernel includes BORE scheduling and other latency improvements. For serious tracking work, `linux-cachyos-rt` or `linux-cachyos-lts-rt` gives you a fully preemptible kernel.
+  hr {
+    border: none;
+    border-top: 1px solid var(--zb-border-dim);
+    margin: 40px 0;
+  }
 
-Install it, set it as default in your bootloader, reboot, and your achievable minimum buffer size will likely drop by half.
+  /* ── Inline code ─────────────────────────────────────────── */
+  code {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    color: var(--zb-green-light);
+    background: rgba(0,0,0,0.3);
+    border: 1px solid var(--zb-border-dim);
+    padding: 1px 6px;
+    border-radius: 3px;
+  }
 
-You'll also want to ensure your user is in the `realtime` group:
+  /* ── Code blocks ─────────────────────────────────────────── */
+  .code-block {
+    position: relative;
+    margin: 20px 0;
+  }
 
-```bash
-sudo usermod -aG realtime $USER
-```
+  .code-block pre {
+    background: var(--zb-bg-darker);
+    border: 1px solid var(--zb-border-dim);
+    border-radius: 6px;
+    padding: 16px 20px;
+    overflow-x: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--zb-border) transparent;
+  }
 
-Log out and back in. PipeWire will automatically use realtime scheduling when available.
+  .code-block pre::-webkit-scrollbar { height: 4px; }
+  .code-block pre::-webkit-scrollbar-track { background: transparent; }
+  .code-block pre::-webkit-scrollbar-thumb { background: var(--zb-border); border-radius: 2px; }
 
----
+  .code-block pre code {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--zb-fg);
+    background: none;
+    border: none;
+    padding: 0;
+    border-radius: 0;
+  }
 
-## Part 3: Getting PipeWire right
+  .code-block .lang-tag {
+    position: absolute;
+    top: 0; right: 42px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    color: var(--zb-fg-dimmer);
+    background: var(--zb-bg-darker);
+    padding: 2px 8px;
+    border-radius: 0 0 4px 4px;
+    border: 1px solid var(--zb-border-dim);
+    border-top: none;
+    letter-spacing: 0.05em;
+    text-transform: lowercase;
+  }
 
-### Verify what you have
+  .copy-btn {
+    position: absolute;
+    top: 8px; right: 8px;
+    background: var(--zb-bg-light);
+    border: 1px solid var(--zb-border);
+    color: var(--zb-fg-dimmer);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: color 0.15s, background 0.15s;
+  }
 
-First, confirm PipeWire is running and your interface is visible:
+  .copy-btn:hover {
+    color: var(--zb-fg);
+    background: var(--zb-bg-lighter);
+  }
 
-```bash
-pw-cli list-objects | grep -i node
-```
+  .copy-btn.copied {
+    color: var(--zb-green);
+    border-color: var(--zb-green);
+  }
 
-You should see your interface listed. If you see it, PipeWire has found it. If you don't, that's an ALSA problem — skip to the troubleshooting section.
+  /* Syntax tinting for bash */
+  .bash .comment { color: var(--zb-green); font-style: italic; }
+  .bash .flag { color: var(--zb-blue); }
+  .bash .string { color: var(--zb-red); }
+  .bash .cmd { color: var(--zb-yellow); }
 
-The tool you'll use most for monitoring is `pw-top`. Run it in a terminal while you work:
+  /* ── Tables ──────────────────────────────────────────────── */
+  .table-wrap {
+    overflow-x: auto;
+    margin: 20px 0;
+    border-radius: 6px;
+    border: 1px solid var(--zb-border-dim);
+  }
 
-```bash
-pw-top
-```
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
 
-This shows you every active audio node, its current buffer size (quantum), and — critically — whether it's experiencing xruns (the `E` column). This is your real-time view into what the stack is actually doing.
+  thead tr {
+    background: var(--zb-bg-darker);
+  }
 
-### Where configuration lives
+  th {
+    padding: 10px 16px;
+    text-align: left;
+    font-weight: 600;
+    color: var(--zb-yellow);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    border-bottom: 1px solid var(--zb-border);
+    white-space: nowrap;
+  }
 
-PipeWire follows a consistent Linux convention: system defaults live in `/usr/share/pipewire/` and you override them in `~/.config/pipewire/`. Never edit the system files — your changes will be overwritten by package updates.
+  td {
+    padding: 9px 16px;
+    border-bottom: 1px solid var(--zb-border-dim);
+    color: var(--zb-fg);
+    vertical-align: top;
+  }
 
-Create this structure if it doesn't exist:
+  tr:last-child td { border-bottom: none; }
 
-```bash
-mkdir -p ~/.config/pipewire/pipewire.conf.d
+  tbody tr:hover { background: rgba(255,255,255,0.025); }
+
+  td:first-child {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    color: var(--zb-blue);
+    white-space: nowrap;
+  }
+
+  td:nth-child(2) {
+    color: var(--zb-orange);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+
+  /* ── Lists ───────────────────────────────────────────────── */
+  ul, ol {
+    margin: 12px 0 16px 0;
+    padding-left: 24px;
+  }
+
+  li {
+    margin-bottom: 6px;
+    color: var(--zb-fg);
+  }
+
+  li::marker { color: var(--zb-green); }
+
+  /* ── Callout boxes ───────────────────────────────────────── */
+  .callout {
+    border-left: 3px solid var(--zb-orange);
+    background: rgba(223,175,143,0.07);
+    padding: 14px 18px;
+    margin: 20px 0;
+    border-radius: 0 4px 4px 0;
+  }
+
+  .callout p { margin-bottom: 0; }
+  .callout p + p { margin-top: 10px; }
+
+  .callout.note {
+    border-left-color: var(--zb-blue);
+    background: rgba(140,208,211,0.07);
+  }
+
+  .callout.warning {
+    border-left-color: var(--zb-red);
+    background: rgba(204,147,147,0.07);
+  }
+
+  /* ── Footer ──────────────────────────────────────────────── */
+  footer {
+    margin-top: 64px;
+    padding-top: 24px;
+    border-top: 1px solid var(--zb-border-dim);
+    font-size: 12px;
+    color: var(--zb-fg-dimmer);
+    font-style: italic;
+  }
+
+  /* ── Responsive ──────────────────────────────────────────── */
+  @media (max-width: 900px) {
+    nav { display: none; }
+    main { margin-left: 0; padding: 24px 20px 64px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <a class="header-logo" href="#">
+    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <path d="M12 3C7.03 3 3 7.03 3 12s4.03 9 9 9 9-4.03 9-9-4.03-9-9-9zm0 2c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14c-2.67 0-5.03-1.37-6.41-3.44C7.05 14.06 9.47 13 12 13s4.95 1.06 6.41 2.56C16.03 17.63 13.67 19 12 19z"/>
+    </svg>
+    <span class="header-title">linux-audio-for-musicians</span>
+  </a>
+  <div class="header-sep"></div>
+  <span class="header-subtitle">PipeWire · JACK · ALSA · 2026</span>
+  <span class="header-badge">PipeWire 1.x / WirePlumber 0.5.x</span>
+</header>
+
+<div class="shell">
+
+  <nav id="sidebar">
+    <div class="nav-section-label">Introduction</div>
+    <a href="#assumptions">Before we start</a>
+
+    <div class="nav-section-label">Part 1</div>
+    <a href="#mental-model">The mental model</a>
+    <a href="#signal-chains" class="sub">Signal chains, not layers</a>
+
+    <div class="nav-section-label">Part 2</div>
+    <a href="#latency">Latency</a>
+    <a href="#the-bet" class="sub">The bet you're making</a>
+    <a href="#the-numbers" class="sub">The numbers</a>
+    <a href="#rt-kernel" class="sub">Realtime kernel</a>
+
+    <div class="nav-section-label">Part 3</div>
+    <a href="#pipewire">Getting PipeWire right</a>
+    <a href="#verify" class="sub">Verify what you have</a>
+    <a href="#config-location" class="sub">Where config lives</a>
+    <a href="#buffer-size" class="sub">Setting buffer size</a>
+    <a href="#pro-audio-profile" class="sub">Pro-audio profile</a>
+
+    <div class="nav-section-label">Part 4</div>
+    <a href="#feels-broken">Things that feel broken</a>
+    <a href="#meters-no-sound" class="sub">Meters move, no sound</a>
+    <a href="#periodic-clicks" class="sub">Periodic clicks/pops</a>
+    <a href="#disappearing-device" class="sub">Device disappears</a>
+    <a href="#monitoring-delay" class="sub">Monitoring delay</a>
+    <a href="#xrun-floor" class="sub">Can't get below 512</a>
+    <a href="#sample-rate" class="sub">Sample rate ignored</a>
+
+    <div class="nav-section-label">Part 5</div>
+    <a href="#jack">JACK for DAW work</a>
+    <a href="#jack-timing" class="sub">Configuring timing</a>
+    <a href="#jack-connections" class="sub">Viewing connections</a>
+
+    <div class="nav-section-label">Part 6</div>
+    <a href="#multi-interface">Multi-interface setups</a>
+    <a href="#aggregating" class="sub">Aggregating interfaces</a>
+
+    <div class="nav-section-label">Part 7</div>
+    <a href="#midi">MIDI and RTP-MIDI</a>
+    <a href="#usb-midi" class="sub">USB MIDI</a>
+    <a href="#rtp-midi" class="sub">RTP-MIDI</a>
+
+    <div class="nav-section-label">Part 8</div>
+    <a href="#channel-mapping">Channel mapping</a>
+
+    <div class="nav-section-label">Reference</div>
+    <a href="#commands">Commands you'll use</a>
+    <a href="#alsa-appendix">ALSA troubleshooting</a>
+  </nav>
+
+  <main>
+    <div class="content">
+
+      <h1>Linux Audio for Musicians</h1>
+      <p class="subtitle">A practical guide for 2026 — written for people who think in signal chains, not system architecture</p>
+
+      <!-- ── Before we start ──────────────────────────── -->
+      <h2 id="assumptions">Before we start: what this guide assumes</h2>
+
+      <p>You know what a signal chain is. You've plugged a guitar into a DI, routed it to a channel strip, sent it to a bus, printed it to a track. You think in terms of <em>in</em>, <em>out</em>, <em>through</em>, and <em>why is there a click every 30 seconds</em>.</p>
+
+      <p>This guide does not assume you know what a kernel module is.</p>
+
+      <p>It does assume you want to record real instruments, with real latency requirements, on Linux — and that you're tired of documentation written by people who find the architecture interesting rather than the music.</p>
+
+      <hr>
+
+      <!-- ── Part 1 ───────────────────────────────────── -->
+      <h2 id="mental-model">Part 1: The mental model <em style="font-size:14px;font-weight:400;color:var(--zb-fg-dimmer)">(read this, skip nothing)</em></h2>
+
+      <h3 id="signal-chains">Think in signal chains, not layers</h3>
+
+      <p>Every piece of Linux audio documentation you'll find starts with a diagram that looks like this:</p>
+
+      <div class="code-block">
+        <pre><code>Application → PulseAudio/JACK → ALSA → Hardware</code></pre>
+      </div>
+
+      <p>This is technically accurate and practically useless, for the same reason that explaining a mixing console by starting with its power supply is technically accurate and practically useless.</p>
+
+      <p>Here's the model that actually helps:</p>
+
+      <p><strong>Your audio interface is a patch bay.</strong> It has physical inputs and outputs, a fixed number of channels, and it runs at a clock rate you set. Everything else in the system is trying to get signals to and from that patch bay reliably, without dropping chunks.</p>
+
+      <p><strong>PipeWire is the studio.</strong> It's the environment in which all your applications — your DAW, your browser, your software synths — exist simultaneously and can route audio between each other and to the patch bay. It manages who gets to talk, when, and in what order.</p>
+
+      <p><strong>ALSA is the cable from the patch bay to the wall.</strong> It's the low-level driver that lets PipeWire talk to your hardware at all. In normal operation, you will never think about it. It will only matter if your interface isn't showing up at all, in which case there's a troubleshooting section later.</p>
+
+      <p>That's the whole stack. ALSA talks to hardware. PipeWire routes everything. Your apps talk to PipeWire.</p>
+
+      <div class="callout note">
+        <p>You'll read a lot about PulseAudio and JACK as if they're things you need to choose between. On any modern Linux distribution in 2026, PipeWire has replaced both. It speaks their languages for compatibility — apps written for JACK or PulseAudio work without modification — but PipeWire is the actual ground truth. Start there.</p>
+      </div>
+
+      <hr>
+
+      <!-- ── Part 2 ───────────────────────────────────── -->
+      <h2 id="latency">Part 2: Latency — the thing that actually matters</h2>
+
+      <h3 id="the-bet">The bet you're making</h3>
+
+      <p>Every audio system works by processing audio in chunks. Your interface captures some samples, hands them to the computer, the computer processes them, hands them back, the interface plays them out. The size of that chunk — the <strong>buffer</strong> — determines your latency.</p>
+
+      <p>Here's the mental model: <strong>your buffer size is a bet you're making about how long your CPU has to process a chunk before the next one arrives.</strong></p>
+
+      <p>If your buffer is 128 samples at 48kHz, you're telling the system: "I bet I can process 2.67ms worth of audio, consistently, every 2.67ms, with no interruptions." If you win that bet every time, you hear nothing wrong. If you lose it — the CPU gets interrupted by something, a USB packet is late, a driver hiccuped — you get an <strong>xrun</strong>: a dropout, a click, a glitch.</p>
+
+      <p>This is why the advice "just lower your buffer size" is incomplete. A lower buffer is a harder bet. Whether you can win it depends on your hardware, your kernel configuration, your interface's USB implementation, and what else your system is doing.</p>
+
+      <h3 id="the-numbers">The numbers</h3>
+
+      <p>At 48kHz (standard for most interfaces):</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Buffer size</th>
+              <th>Latency (one-way)</th>
+              <th>Practical feel</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>64 samples</td>
+              <td>1.3ms</td>
+              <td>Aggressive. Requires optimized kernel, nothing else running.</td>
+            </tr>
+            <tr>
+              <td>128 samples</td>
+              <td>2.7ms</td>
+              <td>Good for most tracking. The target for serious work.</td>
+            </tr>
+            <tr>
+              <td>256 samples</td>
+              <td>5.3ms</td>
+              <td>Fine for most musicians. Not noticeable on guitar or keys.</td>
+            </tr>
+            <tr>
+              <td>512 samples</td>
+              <td>10.7ms</td>
+              <td>Getting perceptible. Okay for mixing, not ideal for tracking.</td>
+            </tr>
+            <tr>
+              <td>1024 samples</td>
+              <td>21.3ms</td>
+              <td>Noticeable. Only use this if lower causes xruns.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Round-trip latency (in to out) is roughly double, plus a fixed hardware offset that varies by interface. Your interface's hardware buffer adds a few milliseconds on top — check your device's specs.</p>
+
+      <div class="callout">
+        <p><strong>The practical starting point:</strong> Use 256 samples until you have a reason not to. If you're tracking live instruments and the delay is perceptible, try 128. If you get xruns at 128, you need to look at your kernel setup before blaming your interface.</p>
+      </div>
+
+      <h3 id="rt-kernel">The realtime kernel question</h3>
+
+      <p>Consumer Linux kernels are not optimized for audio. They can be interrupted by other system processes mid-chunk, which causes xruns at low buffer sizes. A <strong>realtime (RT) kernel</strong> reduces this dramatically by giving audio processes the ability to preempt almost everything else.</p>
+
+      <p>On CachyOS, you already have good options. The <code>linux-cachyos</code> kernel includes BORE scheduling and other latency improvements. For serious tracking work, <code>linux-cachyos-rt</code> or <code>linux-cachyos-lts-rt</code> gives you a fully preemptible kernel.</p>
+
+      <p>Install it, set it as default in your bootloader, reboot, and your achievable minimum buffer size will likely drop by half.</p>
+
+      <p>You'll also want to ensure your user is in the <code>realtime</code> group:</p>
+
+      <div class="code-block">
+        <span class="lang-tag">bash</span>
+        <button class="copy-btn" onclick="copyCode(this)">copy</button>
+        <pre><code>sudo usermod -aG realtime $USER</code></pre>
+      </div>
+
+      <p>Log out and back in. PipeWire will automatically use realtime scheduling when available.</p>
+
+      <hr>
+
+      <!-- ── Part 3 ───────────────────────────────────── -->
+      <h2 id="pipewire">Part 3: Getting PipeWire right</h2>
+
+      <h3 id="verify">Verify what you have</h3>
+
+      <p>First, confirm PipeWire is running and your interface is visible:</p>
+
+      <div class="code-block">
+        <span class="lang-tag">bash</span>
+        <button class="copy-btn" onclick="copyCode(this)">copy</button>
+        <pre><code>pw-cli list-objects | grep -i node</code></pre>
+      </div>
+
+      <p>You should see your interface listed. If you see it, PipeWire has found it. If you don't, that's an ALSA problem — skip to the troubleshooting section.</p>
+
+      <p>The tool you'll use most for monitoring is <code>pw-top</code>. Run it in a terminal while you work:</p>
+
+      <div class="code-block">
+        <span class="lang-tag">bash</span>
+        <button class="copy-btn" onclick="copyCode(this)">copy</button>
+        <pre><code>pw-top</code></pre>
+      </div>
+
+      <p>This shows you every active audio node, its current buffer size (quantum), and — critically — whether it's experiencing xruns (the <code>E</code> column). This is your real-time view into what the stack is actually doing.</p>
+
+      <h3 id="config-location">Where configuration lives</h3>
+
+      <p>PipeWire follows a consistent Linux convention: system defaults live in <code>/usr/share/pipewire/</code> and you override them in <code>~/.config/pipewire/</code>. Never edit the system files — your changes will be overwritten by package updates.</p>
+
+      <p>Create this structure if it doesn't exist:</p>
+
+      <div class="code-block">
+        <span class="lang-tag">bash</span>
+        <button class="copy-btn" onclick="copyCode(this)">copy</button>
+        <pre><code>mkdir -p ~/.config/pipewire/pipewire.conf.d
 mkdir -p ~/.config/pipewire/pipewire-pulse.conf.d
-mkdir -p ~/.config/wireplumber/wireplumber.conf.d
-```
+mkdir -p ~/.config/wireplumber/wireplumber.conf.d</code></pre>
+      </div>
 
-Configuration is split across fragments — individual `.conf` files that are loaded in filename order. Name them with number prefixes to control load order: `10-timing.conf`, `20-devices.conf`, and so on.
+      <p>Configuration is split across fragments — individual <code>.conf</code> files loaded in filename order. Name them with number prefixes to control load order: <code>10-timing.conf</code>, <code>20-devices.conf</code>, and so on.</p>
 
-After any configuration change:
+      <p>After any configuration change:</p>
 
-```bash
-systemctl --user restart pipewire pipewire-pulse wireplumber
-```
+      <div class="code-block">
+        <span class="lang-tag">bash</span>
+        <button class="copy-btn" onclick="copyCode(this)">copy</button>
+        <pre><code>systemctl --user restart pipewire pipewire-pulse wireplumber</code></pre>
+      </div>
 
-No need to reboot. Changes take effect immediately.
+      <p>No need to reboot. Changes take effect immediately.</p>
 
-### Setting your buffer size
+      <h3 id="buffer-size">Setting your buffer size</h3>
 
-Create `~/.config/pipewire/pipewire.conf.d/10-timing.conf`:
+      <p>Create <code>~/.config/pipewire/pipewire.conf.d/10-timing.conf</code>:</p>
 
-```
-context.properties = {
-    default.clock.rate = 48000
-    default.clock.quantum = 256
+      <div class="code-block">
+        <button class="copy-btn" onclick="copyCode(this)">copy</button>
+        <pre><code>context.properties = {
+    default.clock.rate     = 48000
+    default.clock.quantum  = 256
     default.clock.min-quantum = 64
     default.clock.max-quantum = 1024
-}
-```
+}</code></pre>
+      </div>
 
-`default.clock.quantum` is your buffer size in samples. `default.clock.rate` is your sample rate — match this to what your interface is set to in hardware. A mismatch here causes subtle problems that produce no error message.
+      <p><code>default.clock.quantum</code> is your buffer size in samples. <code>default.clock.rate</code> is your sample rate — match this to what your interface is set to in hardware. A mismatch here causes subtle problems that produce no error message.</p>
 
-`min-quantum` and `max-quantum` set the range that applications can request. A DAW like Ardour can request a smaller quantum than the default; PipeWire will honor it down to your minimum.
+      <p><code>min-quantum</code> and <code>max-quantum</code> set the range that applications can request. A DAW like Ardour can request a smaller quantum than the default; PipeWire will honor it down to your minimum.</p>
 
-### The pro-audio profile
+      <h3 id="pro-audio-profile">The pro-audio profile</h3>
 
-By default, PipeWire tries to be friendly — it maps your interface's channels to logical positions (front-left, front-right, etc.) and lets the desktop manage routing. This is fine for listening to music. It's not what you want for recording.
+      <p>By default, PipeWire tries to be friendly — it maps your interface's channels to logical positions (front-left, front-right, etc.) and lets the desktop manage routing. This is fine for listening to music. It's not what you want for recording.</p>
 
-The **pro-audio profile** bypasses that abstraction: PipeWire connects directly to every physical channel on your interface, raw and numbered. Your DAW sees all 18 (or 32, or however many) inputs and outputs as individual channels, exactly as they come from the hardware.
+      <p>The <strong>pro-audio profile</strong> bypasses that abstraction: PipeWire connects directly to every physical channel on your interface, raw and numbered. Your DAW sees all 18 (or 32, or however many) inputs and outputs as individual channels, exactly as they come from the hardware.</p>
 
-To set this for a specific device, you need its name. Find it:
+      <p>To set this for a specific device, you need its name. Find it:</p>
 
-```bash
-pw-cli list-objects | grep alsa_card
-```
+      <div class="code-block">
+        <span class="lang-tag">bash</span>
+        <button class="copy-btn" onclick="copyCode(this)">copy</button>
+        <pre><code>pw-cli list-objects | grep alsa_card</code></pre>
+      </div>
 
-Then set the profile. Replace `<card-name>` with what you found:
+      <p>Then set the profile. Replace <code>&lt;card-id&gt;</code> with the ID from above:</p>
 
-```bash
-wpctl set-profile <card-id> pro-audio
-```
+      <div class="code-block">
+        <span class="lang-tag">bash</span>
+        <button class="copy-btn" onclick="copyCode(this)">copy</button>
+        <pre><code>wpctl set-profile &lt;card-id&gt; pro-audio</code></pre>
+      </div>
 
-To make this persistent, create `~/.config/wireplumber/wireplumber.conf.d/10-pro-audio.conf`:
+      <p>To make this persistent, create <code>~/.config/wireplumber/wireplumber.conf.d/10-pro-audio.conf</code>:</p>
 
-```
-monitor.alsa.rules = [
+      <div class="code-block">
+        <button class="copy-btn" onclick="copyCode(this)">copy</button>
+        <pre><code>monitor.alsa.rules = [
   {
     matches = [{ node.name = "~alsa_card.*" }]
     actions = {
       update-props = {
-        api.alsa.use-acp = false
-        api.acp.auto-profile = false
-        api.acp.auto-port = false
-        device.profile = "pro-audio"
+        api.alsa.use-acp      = false
+        api.acp.auto-profile  = false
+        api.acp.auto-port     = false
+        device.profile        = "pro-audio"
       }
     }
   }
-]
-```
+]</code></pre>
+      </div>
 
-This tells WirePlumber: for all ALSA cards, ignore the channel mapping system and use raw pro-audio passthrough.
+      <p>This tells WirePlumber: for all ALSA cards, ignore the channel mapping system and use raw pro-audio passthrough.</p>
 
----
+      <hr>
 
-## Part 4: The things that feel broken but aren't
+      <!-- ── Part 4 ───────────────────────────────────── -->
+      <h2 id="feels-broken">Part 4: The things that feel broken but aren't</h2>
 
-This section is not an appendix. It's the part most people need first.
+      <div class="callout note">
+        <p>This section is not an appendix. It's the part most people need first.</p>
+      </div>
 
-### "I see the meters moving but I hear nothing"
+      <h3 id="meters-no-sound">"I see the meters moving but I hear nothing"</h3>
+      <p>You're on the pro-audio profile, and your desktop apps are sending audio to <code>AUX0</code>/<code>AUX1</code> — the raw channel names — instead of a logical stereo output. The fix is to create a virtual device that maps raw channels to named positions. This is covered in Part 8.</p>
+      <p>If you haven't set up pro-audio yet, the other common cause is that PipeWire is sending audio to a different device than you think. Run <code>pw-top</code> and watch which nodes are active when you play something.</p>
 
-You're on the pro-audio profile, and your desktop apps are sending audio to AUX0/AUX1 — the raw channel names — instead of to a logical stereo output. The fix is to create a virtual device that maps raw channels to named positions. This is covered in Part 6.
+      <h3 id="periodic-clicks">"There's a click or pop every 20–30 seconds"</h3>
+      <p>Almost always a quantum mismatch. Two applications are running at different buffer sizes and PipeWire is doing a periodic resync between them. Check <code>pw-top</code> — look for nodes showing different quantum values. The fix is usually to lock the quantum in your JACK configuration (Part 5) or to close the application causing the mismatch. If the clicks are irregular and accompanied by xruns in <code>pw-top</code>, you have a genuine timing problem: your buffer is too small for your system, or you need an RT kernel.</p>
 
-If you haven't set up pro-audio yet, the other common cause is that PipeWire is sending audio to a different device than you think. Run `pw-top` and watch which nodes are active when you play something.
+      <h3 id="disappearing-device">"Audio works, but my interface disappears when I open a second app"</h3>
+      <p>ALSA in its raw form can only talk to one application at a time. This is why PipeWire exists — it's the one app that holds the ALSA connection, and everything else talks to PipeWire. If an application is bypassing PipeWire and talking to ALSA directly (some older software does this), it will lock out everything else. Force the app to use PipeWire, PulseAudio compatibility, or JACK (all of which go through PipeWire on a modern system). Never let an app use the <code>hw:</code> ALSA device directly if you can avoid it.</p>
 
-### "There's a click or pop every 20-30 seconds"
+      <h3 id="monitoring-delay">"My latency is fine in the DAW but there's a delay when monitoring through software"</h3>
+      <p>This is correct behavior, not a bug. When you record with software monitoring, the signal travels: interface input → ALSA → PipeWire → DAW → PipeWire → ALSA → interface output. That round trip adds your buffer latency twice, plus the DAW's own processing delay.</p>
+      <p>Solutions, in order of preference:</p>
+      <ol>
+        <li><strong>Use hardware monitoring.</strong> Most interfaces with direct monitoring mix the input signal back to the output in hardware, before the software stack is involved. Zero latency. Use this for tracking whenever possible.</li>
+        <li><strong>Reduce your buffer size.</strong> At 128 samples / 48kHz, round-trip software latency is around 8–12ms depending on your interface — below the threshold of perception for most musicians.</li>
+        <li><strong>Use Ardour's latency compensation.</strong> Ardour measures and compensates for round-trip latency automatically when you run its latency calibration wizard.</li>
+      </ol>
 
-Almost always a quantum mismatch. Two applications are running at different buffer sizes, and PipeWire is doing a periodic resync between them. 
+      <h3 id="xrun-floor">"I can't get below 512 samples without xruns"</h3>
+      <p>Before blaming your hardware, check these in order:</p>
 
-Check `pw-top` — look for nodes showing different quantum values. The fix is usually to lock the quantum in your JACK configuration (see Part 5) or to close the application causing the mismatch.
-
-If the clicks are irregular and accompanied by xruns in `pw-top`, you have a genuine timing problem: your buffer is too small for your system, or you need an RT kernel.
-
-### "Audio works, but my interface disappears when I open a second app"
-
-ALSA in its raw form can only talk to one application at a time. This is why PipeWire exists — it's the one app that holds the ALSA connection, and everything else talks to PipeWire. If an application is bypassing PipeWire and talking to ALSA directly (some older software does this), it will lock out everything else.
-
-Check if the app has a setting for audio backend. Force it to use PipeWire, PulseAudio compatibility, or JACK (all of which go through PipeWire on a modern system). Never let an app use the `hw:` ALSA device directly if you can avoid it.
-
-### "My latency is fine in the DAW but there's a delay when monitoring through software"
-
-This is correct behavior, not a bug. When you record a track with software monitoring, the signal goes: interface input → ALSA → PipeWire → DAW → PipeWire → ALSA → interface output. That round trip adds your buffer latency twice, plus the DAW's own processing delay.
-
-Solutions, in order of preference:
-
-1. **Use hardware monitoring.** Most interfaces with direct monitoring mix the input signal back to the output in hardware, before any of the software stack is involved. Zero latency. Use this for tracking whenever possible.
-2. **Reduce your buffer size.** At 128 samples / 48kHz, round-trip software latency is around 8-12ms depending on your interface — below the threshold of perception for most musicians.
-3. **Use Ardour's latency compensation.** Ardour measures and compensates for round-trip latency automatically when you run its latency calibration wizard.
-
-### "I can't get below 512 samples without xruns"
-
-Before blaming your hardware, check these in order:
-
-```bash
-# Is your user in the realtime group?
+      <div class="code-block">
+        <span class="lang-tag">bash</span>
+        <button class="copy-btn" onclick="copyCode(this)">copy</button>
+        <pre><code># Is your user in the realtime group?
 groups | grep realtime
 
 # Is PipeWire actually using realtime scheduling?
 journalctl --user -u pipewire | grep -i realtime
 
 # What's using your CPU while audio is running?
-htop
-```
+htop</code></pre>
+      </div>
 
-USB interfaces introduce additional jitter because USB is a polled bus — data doesn't transfer continuously but in packets, and the timing of those packets varies. This is inherent to USB and means USB interfaces generally can't match the low-latency floor of PCIe or Thunderbolt interfaces. 128-256 samples is typically the practical floor for USB, even on ideal hardware.
+      <p>USB interfaces introduce additional jitter because USB is a polled bus — data doesn't transfer continuously but in packets, and the timing of those packets varies. This is inherent to USB and means USB interfaces generally can't match the low-latency floor of PCIe or Thunderbolt interfaces. 128–256 samples is typically the practical floor for USB, even on ideal hardware.</p>
 
-### "My sample rate setting doesn't seem to do anything"
+      <h3 id="sample-rate">"My sample rate setting doesn't seem to do anything"</h3>
+      <p>PipeWire's configured sample rate and your interface's hardware sample rate must match. If your interface has a hardware sample rate selector, set it there first, then match it in your PipeWire config. If they disagree, PipeWire will do a silent sample rate conversion — which costs CPU and subtly degrades quality. Verify the actual rate:</p>
 
-PipeWire's configured sample rate and your interface's hardware sample rate must match. If your interface has a hardware sample rate selector (physical switch, or software utility), set it there first, then match it in your PipeWire config. If they disagree, PipeWire will do a silent sample rate conversion — which costs CPU and subtly degrades quality.
+      <div class="code-block">
+        <span class="lang-tag">bash</span>
+        <button class="copy-btn" onclick="copyCode(this)">copy</button>
+        <pre><code>cat /proc/asound/card*/stream*</code></pre>
+      </div>
 
-Verify the actual rate your interface is running:
+      <hr>
 
-```bash
-cat /proc/asound/card*/stream*
-```
+      <!-- ── Part 5 ───────────────────────────────────── -->
+      <h2 id="jack">Part 5: JACK for DAW work</h2>
 
----
+      <p>Applications like Ardour, Reaper, and most professional DAWs communicate using the JACK protocol. It gives them precise timing control, deterministic latency, and the ability to create direct connections between applications — routing audio from a software synth into a DAW track, for example.</p>
 
-## Part 5: JACK for DAW work
+      <p>On a modern system, you don't install JACK. You use PipeWire's JACK compatibility layer, which is already present. Verify:</p>
 
-### Why JACK (via PipeWire)
+      <div class="code-block">
+        <span class="lang-tag">bash</span>
+        <button class="copy-btn" onclick="copyCode(this)">copy</button>
+        <pre><code>pw-jack ardour</code></pre>
+      </div>
 
-Applications like Ardour, Reaper, and most professional DAWs communicate using the JACK protocol. It gives them precise timing control, deterministic latency, and the ability to create direct connections between applications — routing audio from a software synth into a DAW track, for example.
+      <p>If Ardour opens and shows JACK in its audio setup, you're done. If not, install <code>pipewire-jack</code> (on Arch-based systems it's part of the <code>pipewire</code> package).</p>
 
-On a modern system, you don't install JACK. You use PipeWire's JACK compatibility layer, which is already present. Verify:
+      <h3 id="jack-timing">Configuring JACK timing</h3>
 
-```bash
-pw-jack ardour
-```
+      <p>Create <code>~/.config/pipewire/jack.conf.d/10-timing.conf</code>:</p>
 
-If Ardour opens and shows JACK in its audio setup, you're done. If not, install `pipewire-jack` (package name varies by distro — on Arch-based systems it's part of `pipewire`).
-
-### Configuring JACK timing
-
-Create `~/.config/pipewire/jack.conf.d/10-timing.conf`:
-
-```
-jack.properties = {
-    node.latency = 128/48000
+      <div class="code-block">
+        <button class="copy-btn" onclick="copyCode(this)">copy</button>
+        <pre><code>jack.properties = {
+    node.latency      = 128/48000
     node.lock-quantum = true
     node.force-quantum = 128
-}
-```
+}</code></pre>
+      </div>
 
-`node.latency` sets your buffer as a fraction of sample rate — numerator/denominator. `node.lock-quantum` prevents other applications from changing the buffer size while JACK is running. `node.force-quantum` enforces your chosen size system-wide.
+      <p><code>node.latency</code> sets your buffer as a fraction of sample rate. <code>node.lock-quantum</code> prevents other applications from changing the buffer size while JACK is running. <code>node.force-quantum</code> enforces your chosen size system-wide.</p>
 
-**This is the most important setting for stable DAW work.** When `node.lock-quantum` is true, you've committed: every application in the graph runs at the same buffer size, no negotiation, no resync clicks.
+      <div class="callout">
+        <p><strong>This is the most important setting for stable DAW work.</strong> When <code>node.lock-quantum</code> is true, you've committed: every application in the graph runs at the same buffer size, no negotiation, no resync clicks.</p>
+      </div>
 
-### Viewing and managing connections
+      <h3 id="jack-connections">Viewing and managing connections</h3>
 
-```bash
-pw-jack jack_lsp          # list all JACK ports
-pw-jack jack_lsp -c       # list with connections
-```
+      <div class="code-block">
+        <span class="lang-tag">bash</span>
+        <button class="copy-btn" onclick="copyCode(this)">copy</button>
+        <pre><code>pw-jack jack_lsp        # list all JACK ports
+pw-jack jack_lsp -c     # list with connections</code></pre>
+      </div>
 
-For a graphical view, `qpwgraph` is the modern tool — it shows your entire PipeWire graph, JACK and PulseAudio nodes together, and lets you drag connections between them. Install it; it's essential.
+      <p>For a graphical view, <code>qpwgraph</code> is the modern tool — it shows your entire PipeWire graph, JACK and PulseAudio nodes together, and lets you drag connections between them. Install it; it's essential.</p>
 
----
+      <hr>
 
-## Part 6: Multi-interface setups
+      <!-- ── Part 6 ───────────────────────────────────── -->
+      <h2 id="multi-interface">Part 6: Multi-interface setups</h2>
 
-### The problem
+      <p>By default, PipeWire sees multiple interfaces separately and won't let a DAW address them simultaneously as a single aggregate device. Here's how to fix that.</p>
 
-You have more than one audio interface. Maybe a primary interface for tracking and a second one for monitoring, or a dedicated headphone amp, or a hardware unit that shows up as its own USB device. By default, PipeWire sees them separately and won't let a DAW address both simultaneously as a single aggregate device.
+      <h3 id="aggregating">Aggregating interfaces in PipeWire</h3>
 
-### Aggregating interfaces in PipeWire
+      <p>Create <code>~/.config/pipewire/pipewire.conf.d/20-aggregate.conf</code>:</p>
 
-Create `~/.config/pipewire/pipewire.conf.d/20-aggregate.conf`:
-
-```
-context.modules = [
+      <div class="code-block">
+        <button class="copy-btn" onclick="copyCode(this)">copy</button>
+        <pre><code>context.modules = [
   { name = libpipewire-module-combine-stream
     args = {
-      node.name = "combined-interface"
+      node.name        = "combined-interface"
       node.description = "All Interfaces"
-      combine.mode = sink
-      audio.position = [ AUX0 AUX1 AUX2 AUX3 ... ]  # list all channels
-      stream.props = {}
+      combine.mode     = sink
+      audio.position   = [ AUX0 AUX1 AUX2 AUX3 ]
+      stream.props     = {}
       stream.rules = [
         { matches = [{ node.name = "alsa_output.usb-Interface_A*" }]
           actions = { create-stream = { audio.position = [ AUX0 AUX1 ] } } }
@@ -315,99 +885,102 @@ context.modules = [
       ]
     }
   }
-]
-```
+]</code></pre>
+      </div>
 
-Find your exact device names with `pw-cli list-objects | grep alsa_output`.
+      <p>Find your exact device names with <code>pw-cli list-objects | grep alsa_output</code>.</p>
 
-**Important caveat:** Two USB interfaces do not share a clock. Over time — minutes to hours — they will drift relative to each other. For critical recording, this matters. Mitigations:
+      <div class="callout warning">
+        <p><strong>Important:</strong> Two USB interfaces do not share a clock. Over time — minutes to hours — they will drift relative to each other. For critical recording, this matters. Use interfaces that support word clock and lock them together, or an interface that presents all channels as a single USB device. For monitoring and headphone mixing, drift is usually imperceptible.</p>
+      </div>
 
-- Use a single interface with enough channels
-- Use interfaces that support word clock and lock them together
-- Use an interface that presents all its channels as a single USB device (many pro interfaces with ADAT expansion do this)
+      <hr>
 
-For monitoring and headphone mixing, drift is usually imperceptible. For tracking, be aware.
+      <!-- ── Part 7 ───────────────────────────────────── -->
+      <h2 id="midi">Part 7: MIDI and RTP-MIDI</h2>
 
----
+      <h3 id="usb-midi">Standard USB MIDI</h3>
 
-## Part 7: MIDI and RTP-MIDI
+      <p>USB MIDI devices are detected automatically by PipeWire. Verify:</p>
 
-### Standard USB MIDI
+      <div class="code-block">
+        <span class="lang-tag">bash</span>
+        <button class="copy-btn" onclick="copyCode(this)">copy</button>
+        <pre><code>aconnect -l                          # ALSA view
+pw-cli list-objects | grep midi      # PipeWire view</code></pre>
+      </div>
 
-USB MIDI devices are detected automatically by PipeWire. Verify:
+      <p>In Ardour or any JACK-aware DAW, MIDI ports appear alongside audio ports in the connection manager.</p>
 
-```bash
-aconnect -l         # list MIDI connections (ALSA view)
-pw-cli list-objects | grep midi   # PipeWire view
-```
+      <h3 id="rtp-midi">RTP-MIDI (network MIDI)</h3>
 
-In Ardour or any JACK-aware DAW, MIDI ports appear alongside audio ports in the connection manager.
+      <p>RTP-MIDI lets you send MIDI over Ethernet — essential for multi-room setups or hardware like the iConnectivity mioXL. Linux support for standard RTP-MIDI is provided by <code>rtpmidid</code>.</p>
 
-### RTP-MIDI (network MIDI)
-
-RTP-MIDI lets you send MIDI over Ethernet — essential for multi-room setups or hardware like the iConnectivity mioXL. Linux support is provided by `ravenna-alsa-lkm` (for Ravenna/AES67) or, for standard RTP-MIDI, `rtpmidid`.
-
-Install `rtpmidid`:
-```bash
-# Arch/CachyOS
+      <div class="code-block">
+        <span class="lang-tag">bash</span>
+        <button class="copy-btn" onclick="copyCode(this)">copy</button>
+        <pre><code># Arch/CachyOS
 yay -S rtpmidid
-```
 
-Enable and start it:
-```bash
-systemctl --user enable --now rtpmidid
-```
+# Enable and start
+systemctl --user enable --now rtpmidid</code></pre>
+      </div>
 
-`rtpmidid` creates ALSA sequencer ports that appear in your MIDI connection manager. It advertises itself via mDNS, so it will appear on compatible hardware automatically. For the mioXL specifically: it should discover `rtpmidid` and offer a connection from its network configuration interface. Once connected, the mioXL's ports appear in `aconnect -l` and are available to any application.
+      <p><code>rtpmidid</code> creates ALSA sequencer ports that appear in your MIDI connection manager. It advertises itself via mDNS, so it will appear on compatible hardware automatically. For the mioXL specifically: it should discover <code>rtpmidid</code> and offer a connection from its network configuration interface. Once connected, the mioXL's ports appear in <code>aconnect -l</code> and are available to any application.</p>
 
-To make connections persistent across reboots, use `aconnectrc` or configure them in your DAW's MIDI connection manager.
+      <p>To make connections persistent across reboots, use <code>aconnectrc</code> or configure them in your DAW's MIDI connection manager.</p>
 
----
+      <hr>
 
-## Part 8: Channel mapping for desktop apps
+      <!-- ── Part 8 ───────────────────────────────────── -->
+      <h2 id="channel-mapping">Part 8: Channel mapping for desktop apps</h2>
 
-*This section only matters if you're running the pro-audio profile and want your browser, media player, etc. to output to specific channels correctly. If you only care about DAW work, skip this.*
+      <div class="callout note">
+        <p>This section only matters if you're running the pro-audio profile and want your browser, media player, etc. to output to specific channels correctly. If you only care about DAW work, skip this.</p>
+      </div>
 
-With pro-audio profile active, PipeWire exposes raw channels (AUX0, AUX1, ...) instead of named positions (FL, FR). Desktop apps expect named positions. The fix is to create virtual devices that map between them.
+      <p>With the pro-audio profile active, PipeWire exposes raw channels (<code>AUX0</code>, <code>AUX1</code>, …) instead of named positions (<code>FL</code>, <code>FR</code>). Desktop apps expect named positions. The fix is to create virtual devices that map between them.</p>
 
-This is genuinely one of the rougher edges of the Linux audio stack. It works well once configured, but the configuration is verbose. Here's a minimal example — stereo output to the first two channels of your interface:
+      <p>This is genuinely one of the rougher edges of the Linux audio stack. It works well once configured, but the configuration is verbose. Here's a minimal example — stereo output to the first two channels of your interface.</p>
 
-Create `~/.config/pipewire/pipewire.conf.d/30-desktop-outputs.conf`:
+      <p>Create <code>~/.config/pipewire/pipewire.conf.d/30-desktop-outputs.conf</code>:</p>
 
-```
-context.modules = [
+      <div class="code-block">
+        <button class="copy-btn" onclick="copyCode(this)">copy</button>
+        <pre><code>context.modules = [
   { name = libpipewire-module-loopback
     args = {
       node.description = "Main Stereo Out"
       capture.props = {
-        node.name = "virtual.stereo_out"
+        node.name   = "virtual.stereo_out"
         media.class = "Audio/Sink"
         audio.position = [ FL FR ]
       }
       playback.props = {
-        node.name = "playback.stereo_out"
+        node.name      = "playback.stereo_out"
         audio.position = [ AUX0 AUX1 ]
-        target.object = "alsa_output.usb-YourInterface-00.playback.0.0"
+        target.object  = "alsa_output.usb-YourInterface-00.playback.0.0"
         stream.dont-remix = true
-        node.passive = true
+        node.passive   = true
       }
     }
   }
-]
-```
+]</code></pre>
+      </div>
 
-Replace the `target.object` value with your interface's actual name from `pw-cli list-objects | grep alsa_output`.
+      <p>Replace the <code>target.object</code> value with your interface's actual name from <code>pw-cli list-objects | grep alsa_output</code>.</p>
 
-"Main Stereo Out" will now appear in your desktop sound settings and route correctly to your interface's first two channels.
+      <p>"Main Stereo Out" will now appear in your desktop sound settings and route correctly to your interface's first two channels. For additional outputs (headphone send, monitor B, etc.), add more loopback blocks to the same file with unique <code>node.name</code> values and different <code>AUX</code> channel assignments.</p>
 
-For additional outputs (headphone send, monitor B, etc.), add more loopback blocks to the same file, each with unique `node.name` values and different `AUX` channel assignments.
+      <hr>
 
----
+      <!-- ── Reference ───────────────────────────────── -->
+      <h2 id="commands">Reference: commands you'll actually use</h2>
 
-## Reference: commands you'll actually use
-
-```bash
-# See everything PipeWire knows about
+      <div class="code-block">
+        <span class="lang-tag">bash</span>
+        <button class="copy-btn" onclick="copyCode(this)">copy</button>
+        <pre><code># See everything PipeWire knows about
 pw-cli list-objects
 
 # Monitor real-time performance and xruns
@@ -435,17 +1008,20 @@ systemctl --user restart pipewire pipewire-pulse wireplumber
 wpctl status
 
 # Inspect a specific device (use the ID from wpctl status)
-wpctl inspect <id>
-```
+wpctl inspect &lt;id&gt;</code></pre>
+      </div>
 
----
+      <hr>
 
-## Appendix: when ALSA is actually the problem
+      <!-- ── Appendix ─────────────────────────────────── -->
+      <h2 id="alsa-appendix">Appendix: when ALSA is actually the problem</h2>
 
-If your interface doesn't appear in `pw-cli list-objects` at all, the issue is below PipeWire.
+      <p>If your interface doesn't appear in <code>pw-cli list-objects</code> at all, the issue is below PipeWire.</p>
 
-```bash
-# Does the OS see the hardware?
+      <div class="code-block">
+        <span class="lang-tag">bash</span>
+        <button class="copy-btn" onclick="copyCode(this)">copy</button>
+        <pre><code># Does the OS see the hardware?
 lsusb | grep -i audio     # for USB interfaces
 lspci | grep -i audio     # for PCIe cards
 
@@ -453,15 +1029,58 @@ lspci | grep -i audio     # for PCIe cards
 aplay -l
 
 # Which driver modules loaded?
-cat /proc/asound/modules
-```
+cat /proc/asound/modules</code></pre>
+      </div>
 
-If `lsusb` sees it but `aplay -l` doesn't, ALSA's driver module didn't load — try `sudo modprobe snd-usb-audio` and check `dmesg | tail -20` for errors.
+      <p>If <code>lsusb</code> sees it but <code>aplay -l</code> doesn't, ALSA's driver module didn't load — try <code>sudo modprobe snd-usb-audio</code> and check <code>dmesg | tail -20</code> for errors.</p>
 
-If `aplay -l` sees it but PipeWire doesn't, restart WirePlumber: `systemctl --user restart wireplumber`.
+      <p>If <code>aplay -l</code> sees it but PipeWire doesn't, restart WirePlumber: <code>systemctl --user restart wireplumber</code>.</p>
 
-If none of this helps, your interface may not be USB Class Compliant — it may require a proprietary driver that doesn't exist on Linux. Check the Linux audio hardware compatibility database before purchasing interfaces.
+      <p>If none of this helps, your interface may not be USB Class Compliant — it may require a proprietary driver that doesn't exist on Linux. Check the Linux audio hardware compatibility database before purchasing interfaces.</p>
 
----
+      <footer>
+        Written for PipeWire 1.x / WirePlumber 0.5.x on a modern distribution (Arch-based, Fedora 40+, Ubuntu 24.04+). Some configuration syntax differs in older versions.
+      </footer>
 
-*This guide was written for PipeWire 1.x / WirePlumber 0.5.x on a modern distribution (Arch-based, Fedora 40+, Ubuntu 24.04+). Some configuration syntax differs in older versions.*
+    </div><!-- .content -->
+  </main>
+
+</div><!-- .shell -->
+
+<script>
+  // ── Copy button ───────────────────────────────────────────
+  function copyCode(btn) {
+    const pre = btn.closest('.code-block').querySelector('pre');
+    const text = pre.innerText;
+    navigator.clipboard.writeText(text).then(() => {
+      btn.textContent = 'copied!';
+      btn.classList.add('copied');
+      setTimeout(() => {
+        btn.textContent = 'copy';
+        btn.classList.remove('copied');
+      }, 1800);
+    });
+  }
+
+  // ── Active nav link on scroll ─────────────────────────────
+  const navLinks = document.querySelectorAll('nav a');
+  const headings = document.querySelectorAll('h2[id], h3[id]');
+
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        navLinks.forEach(l => l.classList.remove('active'));
+        const active = document.querySelector(`nav a[href="#${entry.target.id}"]`);
+        if (active) active.classList.add('active');
+      }
+    });
+  }, {
+    rootMargin: '-52px 0px -70% 0px',
+    threshold: 0
+  });
+
+  headings.forEach(h => observer.observe(h));
+</script>
+
+</body>
+</html>
